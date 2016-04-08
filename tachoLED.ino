@@ -13,11 +13,6 @@
 #include <FreqMeasure.h>
 #include "FastLED.h"
 
-volatile bool newPulse = false;
-volatile unsigned long lastPulseTime;
-volatile unsigned long lastPulseInterval = 0;
-volatile unsigned long pulseCount = 0;
-volatile unsigned long intervalAverage = 60000;
 unsigned long rpmAvg = 1000;
 unsigned long rpm = 0;
 int cal = 1;
@@ -37,19 +32,11 @@ void setup() {
 
   FreqMeasure.begin();
   Serial.begin(9600);
-  //attachInterrupt(1, rpmtrigger, RISING);
 }
 
 void loop()
 {
  unsigned long rpm;
- /*if (newPulse)
- {
-    rpm = 60000000UL/intervalAverage;
-    newPulse = false;
-    Serial.println(rpm);
-    showRPM(rpm);
- }*/
  if (FreqMeasure.available()) {
     rpm = (60/cal)* FreqMeasure.countToFrequency(FreqMeasure.read());
     rpmAvg = rollAvg(rpmAvg, rpm);
@@ -126,18 +113,5 @@ void showRPM(unsigned int rpm) {
 unsigned long rollAvg(unsigned long accumulator, unsigned long new_value) {
   accumulator = (ALPHA * new_value) + (1.0 - ALPHA) * accumulator;
   return accumulator;
-}
-
-void rpmtrigger()
-{
- unsigned long right_now = micros();
- unsigned long pulseInterval = right_now - lastPulseTime;
- if (pulseInterval > 1000UL)  // I have chosen 1ms as the minimum pulse interval, you may need to adjust it
- {
-    lastPulseTime = right_now;
-    lastPulseInterval = pulseInterval;
-    intervalAverage = rollAvg(intervalAverage, lastPulseInterval);
-    newPulse = true;
- }
 }
 
