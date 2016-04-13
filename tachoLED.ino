@@ -1,6 +1,6 @@
 /*
  * LED Tachometer
- * Version: 1.0.0
+ * Version: 1.0.2
  * Written by Tristan Jesse
  * 
  * Required Libraries:  FreqMeasure
@@ -14,12 +14,12 @@
 #include "FastLED.h"
 
 #define ALPHA 0.03
-#define BUTTON_PIN 3
+#define BUTTON_PIN 2
 #define DATA_PIN 13
 #define NUM_LEDS 8
 #define BRIGHTNESS 48
 
-int stateMachine = 0;
+int stateMachine = 2;
 int buttonState;
 int lastButtonState = LOW;
 long lastDebounceTime = 0;
@@ -53,48 +53,70 @@ void setup() {
  ******************/
 void loop()
 {
+  boolean setPointsBad;
   if (buttonDebounce()) {
+    delay(1000);
+    Serial.println("In the button loop");
     switch(stateMachine){
-      case '0': // State 0 for setting potentiometer - optoisolator sensitivity
+      case 0: // State 0 for setting potentiometer - optoisolator sensitivity
+        Serial.println("Pot state");
         flashLeds(CRGB::Red);
         while(!buttonDebounce()){
           if (FreqMeasure.available()) {
             leds[0] = CRGB::Green;
             FastLED.show();
+            rpm = (60/cal)* FreqMeasure.countToFrequency(FreqMeasure.read());
+            rpmAvg = rollAvg(rpmAvg, rpm);
+            Serial.println(rpmAvg);
+            FastLED.delay(100);
           } else {
             leds[0] = CRGB::Red;
             FastLED.show();
+            FastLED.delay(100);
           }
         }
         stateMachine++;
         break;
-      case '1': // State 1 for setting low RPM and high RPM
-        boolean setPointsBad = true;
+      case 1: // State 1 for setting low RPM and high RPM
+        Serial.println("RPM State");
+        setPointsBad = true;
         do {
           flashRpmLeds(2);
           turnOnRpm(2);
+          Serial.println("RPM Set Low");
           while(!buttonDebounce()) {
             if (FreqMeasure.available()) {
               rpm = (60/cal)* FreqMeasure.countToFrequency(FreqMeasure.read());
               rpmAvg = rollAvg(rpmAvg, rpm);
+              Serial.println(rpmAvg);
             }
           }
           rpmLow = rpmAvg;
           
           flashRpmLeds(8);
           turnOnRpm(8);
+          Serial.println("RPM Set High");
           while(!buttonDebounce()) {
             if (FreqMeasure.available()) {
               rpm = (60/cal)* FreqMeasure.countToFrequency(FreqMeasure.read());
               rpmAvg = rollAvg(rpmAvg, rpm);
+              Serial.println(rpmAvg);
             }
           }
           rpmHigh = rpmAvg;
 
           setPointsBad = rpmLow > rpmHigh;
         } while(setPointsBad);
-
+        Serial.print("RPM Low: ");
+        Serial.println(rpmLow);
+        Serial.print("RPM High: ");
+        Serial.println(rpmHigh);
         flashLeds(CRGB::Green);
+        stateMachine++;
+        break;
+      case 2:
+        Serial.println("First Press");
+        flashLeds(CRGB::Blue);
         stateMachine = 0;
         break;
         
@@ -131,10 +153,12 @@ boolean buttonDebounce(){
     if (reading != buttonState) {
       buttonState = reading;
       if (buttonState == HIGH) {
+        lastButtonState = reading;
         return true;
       }
     }
   }
+  lastButtonState = reading;
   return false;
 }
 
@@ -198,29 +222,31 @@ void flashRpmLeds(int howMany) {
  */
 void showRPM(unsigned int rpm) {
   fill_solid(leds, NUM_LEDS, CRGB::Black);
+
+  unsigned long rpmVariance = (rpmHigh - rpmLow)/6;
   
-  if (rpm > 500) {
+  if (rpm > rpmLow - rpmVariance) {
     leds[0] = CHSV(96, 255, 255);
   }
-  if (rpm > 800) {
+  if (rpm > rpmLow) {
     leds[1] = CHSV(96, 255, 255);
   }
-  if (rpm > 1100) {
+  if (rpm > rpmLow + rpmVariance) {
     leds[2] = CHSV(96, 255, 255);
   }
-  if (rpm > 1400) {
+  if (rpm > rpmLow + 2*rpmVariance) {
     leds[3] = CHSV(64, 255, 255);
   }
-  if (rpm > 1700) {
+  if (rpm > rpmLow + 3*rpmVariance) {
     leds[4] = CHSV(64, 255, 255);
   }
-  if (rpm > 2000) {
+  if (rpm > rpmLow + 4*rpmVariance) {
     leds[5] = CHSV(64, 255, 255);
   }
-  if (rpm > 2300) {
+  if (rpm > rpmLow + 5*rpmVariance) {
     leds[6] = CHSV(0, 255, 255);
   }
-  if (rpm > 2600) {
+  if (rpm > rpmHigh) {
     leds[7] = CHSV(0, 255, 255);
   }
 
