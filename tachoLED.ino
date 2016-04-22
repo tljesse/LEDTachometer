@@ -13,9 +13,9 @@
 #include <FreqMeasure.h>
 #include "FastLED.h"
 
-#define ALPHA 0.03
-#define BUTTON_PIN 2
-#define DATA_PIN 13
+#define ALPHA 0.05
+#define BUTTON_PIN 9
+#define DATA_PIN 2
 #define NUM_LEDS 8
 #define BRIGHTNESS 48
 
@@ -29,6 +29,7 @@ unsigned long rpmAvg = 1000;
 unsigned long rpm = 0;
 unsigned long rpmLow = 1000;
 unsigned long rpmHigh = 3000;
+unsigned long flashTime = millis();
 int cal = 1;
 
 CRGB leds[NUM_LEDS];
@@ -248,6 +249,13 @@ void showRPM(unsigned int rpm) {
   }
   if (rpm > rpmHigh) {
     leds[7] = CHSV(0, 255, 255);
+    if (millis() - flashTime < 500){
+      turnOnRpm(8);
+    } else if (millis() - flashTime < 1000) {
+      fill_solid(leds, NUM_LEDS, CRGB::Black);
+    } else {
+      flashTime = millis();
+    }
   }
 
   FastLED.show();
