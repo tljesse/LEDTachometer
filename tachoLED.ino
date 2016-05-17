@@ -1,6 +1,6 @@
 /*
  * LED Tachometer
- * Version: 1.0.2
+ * Version: 1.0.3
  * Written by Tristan Jesse
  * 
  * Required Libraries:  FreqMeasure
@@ -13,13 +13,13 @@
 #include <FreqMeasure.h>
 #include "FastLED.h"
 
-#define ALPHA 0.05
-#define BUTTON_PIN 9
+#define ALPHA 0.08
+#define BUTTON_PIN 3
 #define DATA_PIN 2
 #define NUM_LEDS 8
 #define BRIGHTNESS 48
 
-int stateMachine = 2;
+int stateMachine = 0;
 int buttonState;
 int lastButtonState = LOW;
 long lastDebounceTime = 0;
@@ -31,6 +31,11 @@ unsigned long rpmLow = 1000;
 unsigned long rpmHigh = 3000;
 unsigned long flashTime = millis();
 int cal = 1;
+
+volatile bool pattern = false;
+volatile bool select = false;
+volatile bool normalPress = false;
+int whichPattern = 0;
 
 CRGB leds[NUM_LEDS];
 
@@ -44,6 +49,7 @@ void setup() {
   turnOnLeds();
 
   pinMode(BUTTON_PIN, INPUT);
+  attachInterrupt(digitalPinToInterrupt(BUTTON_PIN), isr, RISING);
 
   FreqMeasure.begin();
   Serial.begin(9600);
@@ -55,14 +61,20 @@ void setup() {
 void loop()
 {
   boolean setPointsBad;
-  if (buttonDebounce()) {
+  if (normalPress) {
     delay(1000);
     Serial.println("In the button loop");
     switch(stateMachine){
-      case 0: // State 0 for setting potentiometer - optoisolator sensitivity
+      case 0:
+        Serial.println("First Press");
+        flashLeds(CRGB::Blue);
+        stateMachine++;
+        break;
+      case 1: // State 0 for setting potentiometer - optoisolator sensitivity
         Serial.println("Pot state");
         flashLeds(CRGB::Red);
-        while(!buttonDebounce()){
+        normalPress = false;
+        while(!normalPress){
           if (FreqMeasure.available()) {
             leds[0] = CRGB::Green;
             FastLED.show();
@@ -78,14 +90,15 @@ void loop()
         }
         stateMachine++;
         break;
-      case 1: // State 1 for setting low RPM and high RPM
+      case 2: // State 1 for setting low RPM and high RPM
         Serial.println("RPM State");
+        normalPress = false;
         setPointsBad = true;
         do {
           flashRpmLeds(2);
           turnOnRpm(2);
           Serial.println("RPM Set Low");
-          while(!buttonDebounce()) {
+          while(!normalPress) {
             if (FreqMeasure.available()) {
               rpm = (60/cal)* FreqMeasure.countToFrequency(FreqMeasure.read());
               rpmAvg = rollAvg(rpmAvg, rpm);
@@ -97,7 +110,8 @@ void loop()
           flashRpmLeds(8);
           turnOnRpm(8);
           Serial.println("RPM Set High");
-          while(!buttonDebounce()) {
+          normalPress = false;
+          while(!normalPress) {
             if (FreqMeasure.available()) {
               rpm = (60/cal)* FreqMeasure.countToFrequency(FreqMeasure.read());
               rpmAvg = rollAvg(rpmAvg, rpm);
@@ -115,13 +129,40 @@ void loop()
         flashLeds(CRGB::Green);
         stateMachine++;
         break;
-      case 2:
-        Serial.println("First Press");
-        flashLeds(CRGB::Blue);
-        stateMachine = 0;
-        break;
+      case 3:
+        Serial.println("Blinking Pattern");
+        pattern = true;
+        select = false;
         
+        if (!select) {
+          whichPattern = 0;
+          turnOnRpm(1);
+          FastLED.delay(3000);
+        }
+        if (!select) {
+          whichPattern = 1;
+          turnOnRpm(2);
+          FastLED.delay(3000);
+        }
+        if (!select) {
+          whichPattern = 2;
+          turnOnRpm(3);
+          FastLED.delay(3000);
+        }
+        if (!select) {
+          whichPattern = 3;
+          turnOnRpm(4);
+          FastLED.delay(3000);
+        }
+        fill_solid(leds, NUM_LEDS, CRGB::Black);
+        FastLED.show();
+        FastLED.delay(200);
+        stateMachine = 0;
+        pattern = false;
+        break;
     } // end State Machine
+
+    normalPress = false;
   } // end button actions
   
   unsigned long rpm;
@@ -206,6 +247,10 @@ void turnOnRpm(int howMany) {
   FastLED.show();
 }
 
+void flashRedRpm() {
+  
+}
+
 void flashRpmLeds(int howMany) {
   for(int x = 0; x < 2; x++) {
     turnOnRpm(howMany);
@@ -249,13 +294,45 @@ void showRPM(unsigned int rpm) {
   }
   if (rpm > rpmHigh) {
     leds[7] = CHSV(0, 255, 255);
-    if (millis() - flashTime < 500){
-      turnOnRpm(8);
-    } else if (millis() - flashTime < 1000) {
-      fill_solid(leds, NUM_LEDS, CRGB::Black);
-    } else {
-      flashTime = millis();
-    }
+    switch(whichPattern){
+      case 0:
+        if (millis() - flashTime < 120){
+          turnOnRpm(8);
+        } else if (millis() - flashTime < 240) {
+          fill_solid(leds, NUM_LEDS, CRGB::Black);
+        } else {
+          flashTime = millis();
+        }
+        break;
+      case 1:
+        if (millis() - flashTime < 120) {
+          leds[6] = CHSV(0, 255, 255);
+          leds[7] = CHSV(0, 255, 255);
+        } else if (millis() - flashTime < 240) {
+          leds[6] = CRGB::Black;
+          leds[7] = CRGB::Black;
+        } else {
+          flashTime = millis();
+        }
+        break;
+      case 2:
+        break;
+      case 3:
+        if (millis() - flashTime < 120) {
+          for (int x = 0; x < 4; x++){
+            x < 3 ? leds[x] = CRGB::Green : leds[x] = CRGB::Yellow;
+            leds[x+4] = CRGB::Black;
+          }
+        } else if (millis() - flashTime < 240) {
+          for(int x = 0; x < 4; x++) {
+            x < 2 ? leds[x+4] = CHSV(64, 255, 255) : leds[x+4] = CHSV(0, 255, 255);
+            leds[x] = CRGB::Black;
+          }
+        } else {
+          flashTime = millis();
+        }
+        break;
+    } // end switch
   }
 
   FastLED.show();
@@ -264,5 +341,13 @@ void showRPM(unsigned int rpm) {
 unsigned long rollAvg(unsigned long accumulator, unsigned long new_value) {
   accumulator = (ALPHA * new_value) + (1.0 - ALPHA) * accumulator;
   return accumulator;
+}
+
+void isr() {
+  if (pattern) {
+    select = true;
+  } else {
+    normalPress = true;
+  }
 }
 
