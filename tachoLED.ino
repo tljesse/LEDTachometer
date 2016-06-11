@@ -14,13 +14,17 @@
 #include "FastLED.h"
 
 #define ALPHA 0.08
-#define BUTTON_PIN 3
-#define DATA_PIN 2
+#define SELECT_PIN 3
+#define OPTION_PIN 2
+// change LED data wire to 4
+// change reset pin to 2
+#define DATA_PIN 4
 #define NUM_LEDS 8
 #define BRIGHTNESS 48
 
-int stateMachine = 0;
+int stateMachine = 1;
 int buttonState;
+int selectState;
 int lastButtonState = LOW;
 long lastDebounceTime = 0;
 long debounceDelay = 50;
@@ -35,7 +39,19 @@ int cal = 1;
 volatile bool pattern = false;
 volatile bool select = false;
 volatile bool normalPress = false;
+volatile int selectVal = 0;
+volatile int optionVal = 0;
 int whichPattern = 0;
+int optionLast = 0;
+int selectLast = 0;
+bool ignoreUp = false;
+bool optionUp = false;
+bool enableRpm = true;
+
+unsigned long optionDnTm = 0;
+unsigned long optionUpTm = 0;
+unsigned long selectDnTm = 0;
+unsigned long selectUpTm = 0;
 
 CRGB leds[NUM_LEDS];
 
@@ -48,8 +64,11 @@ void setup() {
   
   turnOnLeds();
 
-  pinMode(BUTTON_PIN, INPUT);
-  attachInterrupt(digitalPinToInterrupt(BUTTON_PIN), isr, RISING);
+  pinMode(SELECT_PIN, INPUT);
+  attachInterrupt(digitalPinToInterrupt(SELECT_PIN), selectIsr, CHANGE);
+
+  pinMode(OPTION_PIN, INPUT);
+  attachInterrupt(digitalPinToInterrupt(OPTION_PIN), optionIsr, CHANGE);
 
   FreqMeasure.begin();
   Serial.begin(9600);
@@ -65,11 +84,6 @@ void loop()
     delay(1000);
     Serial.println("In the button loop");
     switch(stateMachine){
-      case 0:
-        Serial.println("First Press");
-        flashLeds(CRGB::Blue);
-        stateMachine++;
-        break;
       case 1: // State 0 for setting potentiometer - optoisolator sensitivity
         Serial.println("Pot state");
         flashLeds(CRGB::Red);
@@ -87,6 +101,7 @@ void loop()
             FastLED.show();
             FastLED.delay(100);
           }
+          normalPress = selectDebounce();
         }
         stateMachine++;
         break;
@@ -104,6 +119,7 @@ void loop()
               rpmAvg = rollAvg(rpmAvg, rpm);
               Serial.println(rpmAvg);
             }
+            normalPress = selectDebounce();
           }
           rpmLow = rpmAvg;
           
@@ -117,6 +133,7 @@ void loop()
               rpmAvg = rollAvg(rpmAvg, rpm);
               Serial.println(rpmAvg);
             }
+            normalPress = selectDebounce();
           }
           rpmHigh = rpmAvg;
 
@@ -133,45 +150,99 @@ void loop()
         Serial.println("Blinking Pattern");
         pattern = true;
         select = false;
-        
-        if (!select) {
+        unsigned long count = millis();
+        while (millis() - count < 3000 && !select) {
           whichPattern = 0;
-          turnOnRpm(1);
-          FastLED.delay(3000);
+          patternInd(1);
+          select = selectDebounce();
         }
-        if (!select) {
+        count = millis();
+        while (millis() - count < 3000 && !select) {
           whichPattern = 1;
-          turnOnRpm(2);
-          FastLED.delay(3000);
+          patternInd(2);
+          select = selectDebounce();
         }
-        if (!select) {
+        count = millis();
+        while (millis() - count < 3000 && !select) {
           whichPattern = 2;
-          turnOnRpm(3);
-          FastLED.delay(3000);
+          patternInd(3);
+          select = selectDebounce();
         }
-        if (!select) {
+        count = millis();
+        while (millis() - count < 3000 && !select) {
           whichPattern = 3;
-          turnOnRpm(4);
-          FastLED.delay(3000);
+          patternInd(4);
+          select = selectDebounce();
         }
         fill_solid(leds, NUM_LEDS, CRGB::Black);
         FastLED.show();
         FastLED.delay(200);
-        stateMachine = 0;
+        stateMachine = 1;
         pattern = false;
+        select = false;
         break;
     } // end State Machine
-
+    fill_solid(leds, NUM_LEDS, CRGB::Black);
+    FastLED.show();
     normalPress = false;
   } // end button actions
+
+  // check for option pressed
+  if (optionVal == HIGH && optionLast == LOW && (millis() - optionUpTm) > debounceDelay){
+    optionDnTm = millis();
+  }
+  // check if options is longer than 3 second hold -- goes to options menu
+  if (optionVal == HIGH && (millis() - optionDnTm) > 2500) {
+    optionUp = true;
+    selectDnTm = millis();
+  }
+  
+  // check for option release - less than 3 seconds to rpm level
+  if (optionVal == LOW && optionLast == HIGH && (millis() - optionDnTm) > debounceDelay){
+    if(optionUp){
+      normalPress = true;
+      optionUp = false;
+    } else {
+      normalPress = true;
+      stateMachine = 3;
+    }
+    optionUpTm = millis();
+  }
+
+  optionLast = optionVal;
+
+  // check for select pressed
+  if (selectVal == HIGH && selectLast == LOW && (millis() - selectUpTm) > debounceDelay){
+    selectDnTm = millis();
+  }
+
+  // check for select release
+  if (selectVal == LOW && selectLast == HIGH && (millis() - selectDnTm) > debounceDelay){
+    if (ignoreUp == false) enableRpm = true;
+    else ignoreUp = false;
+    selectUpTm = millis();
+  }
+
+  // check for 3 second select hold
+  if (selectVal == HIGH && (millis() - selectDnTm) > 3000){
+    enableRpm = false;
+    ignoreUp = true;
+    selectDnTm = millis();
+  }
+
+  selectLast = selectVal;
   
   unsigned long rpm;
-  if (FreqMeasure.available()) {
+  if (FreqMeasure.available() && enableRpm) {
     rpm = (60/cal)* FreqMeasure.countToFrequency(FreqMeasure.read());
     rpmAvg = rollAvg(rpmAvg, rpm);
     showRPM(rpmAvg);
     Serial.println(rpmAvg);
     //timeoutCounter = timeoutValue;
+  } else if (!enableRpm) {
+    rpm = 0;
+    fill_solid(leds, NUM_LEDS, CRGB::Black);
+    FastLED.show();
   } else {
     rpm = 0;
   }
@@ -186,8 +257,8 @@ void loop()
  *      FUNCTIONS     *
  **********************/
 
-boolean buttonDebounce(){
-  int reading = digitalRead(BUTTON_PIN);
+boolean optionDebounce(){
+  int reading = digitalRead(OPTION_PIN);
   if (reading != lastButtonState){
     lastDebounceTime = millis();
   }
@@ -201,6 +272,21 @@ boolean buttonDebounce(){
     }
   }
   lastButtonState = reading;
+  return false;
+}
+
+boolean selectDebounce(){
+  if (selectVal == HIGH && selectLast == LOW && (millis() - selectUpTm) > debounceDelay){
+    selectDnTm = millis();
+  }
+
+  // check for select release
+  if (selectVal == LOW && selectLast == HIGH && (millis() - selectDnTm) > debounceDelay){
+    selectLast = selectVal;
+    return true;
+    selectUpTm = millis();
+  }
+  selectLast = selectVal;
   return false;
 }
 
@@ -247,8 +333,12 @@ void turnOnRpm(int howMany) {
   FastLED.show();
 }
 
-void flashRedRpm() {
-  
+void patternInd(int howMany) {
+  fill_solid(leds, NUM_LEDS, CRGB::Black);
+  for(int dot = 0; dot < howMany; dot++) {
+    leds[dot] = CRGB::Blue;
+  }
+  FastLED.show();
 }
 
 void flashRpmLeds(int howMany) {
@@ -343,11 +433,11 @@ unsigned long rollAvg(unsigned long accumulator, unsigned long new_value) {
   return accumulator;
 }
 
-void isr() {
-  if (pattern) {
-    select = true;
-  } else {
-    normalPress = true;
-  }
+void selectIsr() {
+  selectVal = digitalRead(SELECT_PIN);
+}
+
+void optionIsr() {
+  optionVal = digitalRead(OPTION_PIN);
 }
 
